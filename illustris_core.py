@@ -42,7 +42,8 @@ snaps = get(sim['snapshots'])
 
 ############################################### funkce ####################################################
 
-def down_sub(simulace, snimek, subhalo, typ = ''):
+#-----------------------downloading illustris data
+def down_sub(simulace, snimek, subhalo, typ = '', filename=''):
 	if typ == "stars":
 		cutout_request = {'stars':'Coordinates,Masses'}
 	elif typ == "gas":
@@ -59,22 +60,23 @@ def down_sub(simulace, snimek, subhalo, typ = ''):
 	sim = get(r['simulations'][simulace]['url'])
 	sub = get(sim['snapshots']+str(snimek)+'/subhalos/'+str(subhalo)+'/')
 	
-	filename = 'cutoutSub-'+str(snimek)+'-'+str(subhalo)
+	if len(filename)==0:	
+		filename = 'cutoutSub-'+str(snimek)+'-'+str(subhalo)
 
 	info = get(sub['meta']['info'])
-	np.save('cutoutSub-'+str(snimek)+'-'+str(subhalo), info)
-
-	soubor = 'cutoutSub-'+str(snimek)+'-'+str(subhalo)+'.hdf5'
+	np.save(filename, info)
+	soubor = filename + '.hdf5'
 	if not os.path.isfile(soubor):
 		soubor = get(sub['cutouts']['subhalo'], cutout_request, soubor)
 	
 	return filename
 
-MassToLightV = 2 #McGaugh 2016
-MassToLightI = 1
-MV = 4.8
-def make_hist(filename, typ, x_res, y_res, x_range, y_range, projekce, normed=False): # typ je - stars, gas, dm
-	
+#-----------------------making 2D histogram, calculating surface brightness
+Ill_mass_unit = 10**10 #solar masses
+Ill_spatial_unit = 10**3 #parsec
+
+#surface density per parsec squared (Msol/pc**2)
+def hist_dens(filename, typ, x_res, y_res, x_range, y_range, projekce):
 	if not os.path.isfile(filename+'.npy') or not os.path.isfile(filename+'.hdf5'):
 		return False
 	else:	
@@ -86,19 +88,29 @@ def make_hist(filename, typ, x_res, y_res, x_range, y_range, projekce, normed=Fa
 		
 			if typ == 'stars':		
 				dens = f[PartType[typ]]['Masses'][:]
-				grid, xedges, yedges = np.histogram2d(x, y, bins=(x_res, y_res), range=[x_range, y_range], weights = dens, normed=normed)
+				grid, xedges, yedges = np.histogram2d(x, y, bins=(x_res, y_res), range=[x_range, y_range], weights = dens)
 				
-				#přepočet na sluneční hmotnosti
-				np.multiply(grid, (MassToLightV*10**10)/(10**6*np.diff(x_range)*np.diff(y_range)/(x_res*y_res)), grid)
-				grid = np.log(grid)
-				np.multiply(grid,2.5,grid)
-				np.subtract(MV+21.572,grid,grid)
+				#calculating surface density
+				np.multiply(grid, (Ill_mass_unit)/(Ill_spatial_unit**2*np.diff(x_range)*np.diff(y_range)/(x_res*y_res)), grid) # density per parsec**2
 
 			elif typ == 'dm':
-				grid, xedges, yedges = np.histogram2d(x, y, bins=(x_res, y_res), range=[x_range, y_range], normed=normed)
+				grid, xedges, yedges = np.histogram2d(x, y, bins=(x_res, y_res), range=[x_range, y_range])
 		return grid, xedges, yedges
 
-def save_hist(grid, xedges, yedges, label_x='', label_y='', name='test', log=False):
+MassToLightV = 2 #McGaugh 2016
+MassToLightI = 1
+MV = 4.8
+
+#magnitude per arcsec
+def hist_surf(grid):
+	np.divide(grid, MassToLightV, grid) # luminosity per parsec**2
+	np.log10(grid, grid)
+	np.multiply(grid,2.5,grid)
+	np.subtract(MV+21.572,grid,grid) # surface brightness in mag
+	#grid[np.isinf(grid)] = float('Inf') # nahradí NaN za Inf
+
+#-----------------------drawing histogram
+def save_hist(grid, xedges, yedges, label_x='', label_y='', name='test', log=False, bad='black'):
 	plt.clf()
 	plt.xlabel(label_x)
 	plt.ylabel(label_y)
@@ -108,9 +120,24 @@ def save_hist(grid, xedges, yedges, label_x='', label_y='', name='test', log=Fal
 	else:
 		img = plt.imshow(grid, interpolation='none', cmap='Greys', origin='low', extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]])
 	
-	img.cmap.set_bad()
-	plt.colorbar(img, cmap='Grays')
+	img.cmap.set_bad(color=bad) # set NaN values color
+	plt.colorbar(img)
 
 	plt.savefig(name + '.png', bbox_inches='tight')
+	
+	return
+
+def show_hist(grid, xedges, yedges, log=False, bad='black', colormap='Greys'):
+	plt.clf()
+	
+	if log:
+		img = plt.imshow(grid, interpolation='none', cmap=colormap, norm=colors.LogNorm(), origin='low', extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]])
+	else:
+		img = plt.imshow(grid, interpolation='none', cmap=colormap, origin='low', extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]])
+	
+	img.cmap.set_bad(color=bad) # set NaN values color
+	plt.colorbar(img)
+
+	plt.show()
 	
 	return
